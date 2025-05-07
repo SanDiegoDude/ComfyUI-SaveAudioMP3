@@ -48,7 +48,4 @@ You'll need to install these manually for the node to work:
     *   **Linux:** `sudo apt update && sudo apt install ffmpeg` (or your distro's equivalent).
     Make sure you can run `ffmpeg -version` in your terminal.
 
-## Current Known Issues
 
-*   **Filename Wildcards:** ComfyUI's fancy filename patterns (like `%date:yyyy-MM-dd%`) aren't currently supported in the `filename_prefix`. The node will use the literal text you enter.
-*   **In-Node Audio Player:** The little audio player doesn't show up in the node after saving. The MP3 file *does* save correctly to your computer, so you can find it in your output folder.
