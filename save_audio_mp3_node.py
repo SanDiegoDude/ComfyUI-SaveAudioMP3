@@ -15,7 +15,7 @@ class SaveAudioMP3:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "audio_data": ("AUDIO",), # Changed input name for clarity
+                "audio_data": ("AUDIO",), # Expects AUDIO type
                 "filename_prefix": ("STRING", {"default": "audio/comfy_audio"}),
                 "bitrate": (["128k", "192k", "256k", "320k", "VBR (q4 default)"], {"default": "192k"}),
             },
@@ -24,21 +24,17 @@ class SaveAudioMP3:
     RETURN_TYPES = ()
     FUNCTION = "save_audio_as_mp3"
     OUTPUT_NODE = True
-    CATEGORY = "audio/save" # Or your preferred category
+    CATEGORY = "audio/save"
 
     def save_audio_as_mp3(self, audio_data, filename_prefix, bitrate):
-        # The AUDIO input from ACE-Step nodes is a tuple containing a single dictionary:
-        # e.g., ({"waveform": tensor, "sample_rate": int},)
+        # Based on the new error, audio_data is directly the dictionary:
+        # e.g., {"waveform": tensor, "sample_rate": int}
         
-        if not isinstance(audio_data, tuple) or not audio_data:
-            print(f"[SaveAudioMP3] Error: Expected a non-empty tuple for audio_data. Got: {type(audio_data)}")
-            return {"ui": {"text": ["Error: Invalid audio data format (expected tuple)."]}}
-
-        audio_dict = audio_data[0] # Get the dictionary from the tuple
-
-        if not isinstance(audio_dict, dict):
-            print(f"[SaveAudioMP3] Error: Expected a dictionary inside the audio_data tuple. Got: {type(audio_dict)}")
+        if not isinstance(audio_data, dict):
+            print(f"[SaveAudioMP3] Error: Expected a dictionary for audio_data. Got: {type(audio_data)}")
             return {"ui": {"text": ["Error: Invalid audio data format (expected dict)."]}}
+
+        audio_dict = audio_data # audio_data is already the dictionary
 
         if "waveform" not in audio_dict or "sample_rate" not in audio_dict:
             print(f"[SaveAudioMP3] Error: Audio dictionary missing 'waveform' or 'sample_rate' key. Keys: {audio_dict.keys()}")
@@ -55,13 +51,11 @@ class SaveAudioMP3:
             waveform_tensor = source_waveform_data
             print(f"[SaveAudioMP3] Source data is a Tensor. Shape: {waveform_tensor.shape}, Dtype: {waveform_tensor.dtype}")
 
-            # ACE-Step seems to return: audio_output[0][0].unsqueeze(0), so it's likely [1, Channels, Samples]
-            # We need to handle if it's [Batch, Channels, Samples] or just [Channels, Samples]
             waveform_single_item = None
-            if waveform_tensor.ndim == 3 and waveform_tensor.shape[0] > 0: # Batch, Channels, Samples
+            if waveform_tensor.ndim == 3 and waveform_tensor.shape[0] > 0: 
                 print(f"[SaveAudioMP3] Tensor is 3D (Batch, Channels, Samples). Processing first item in batch.")
                 waveform_single_item = waveform_tensor[0].cpu() 
-            elif waveform_tensor.ndim == 2: # Channels, Samples
+            elif waveform_tensor.ndim == 2: 
                 print(f"[SaveAudioMP3] Tensor is 2D (Channels, Samples). Assuming single audio item.")
                 waveform_single_item = waveform_tensor.cpu()
             else:
@@ -85,7 +79,7 @@ class SaveAudioMP3:
                 print(f"[SaveAudioMP3] {msg}")
                 return {"ui": {"text": [msg]}}
 
-        elif isinstance(source_waveform_data, str): # Handling if AUDIO type could be a path string from other nodes
+        elif isinstance(source_waveform_data, str): 
             audio_file_path = source_waveform_data
             print(f"[SaveAudioMP3] Source waveform data is a String, assuming it's an audio file path: {audio_file_path}")
             
