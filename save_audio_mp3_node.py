@@ -4,9 +4,9 @@ import os
 import torch
 import numpy as np
 from pydub import AudioSegment
-import folder_paths
+import folder_paths # Primary module for path and pattern handling
 import re
-import comfy.utils # For ComfyUI-specific pattern resolution
+# No specific import from comfy.utils for path formatting needed here
 
 class SaveAudioMP3:
     def __init__(self):
@@ -23,9 +23,11 @@ class SaveAudioMP3:
             },
             "optional": {
                 "song_name": ("STRING", {"default": ""}),
-                # Add prompt and extra_pnginfo if you want to use wildcards based on them
-                # "prompt": ("PROMPT",), 
-                # "extra_pnginfo": ("EXTRA_PNGINFO",)
+                # For folder_paths.get_save_image_path to resolve patterns like [seed], [steps], etc.,
+                # it might need access to prompt or extra_pnginfo.
+                # These are standard names used by SaveImage.
+                "prompt": ("PROMPT",), 
+                "extra_pnginfo": ("EXTRA_PNGINFO",)
             }
         }
 
@@ -38,12 +40,14 @@ class SaveAudioMP3:
         if not name_string:
             return ""
         name_string = re.sub(r'[\s/:*?"<>|]+', '_', name_string)
-        sanitized_name = re.sub(r'[^a-zA-Z0-9_.-]', '', name_string) # Allow dots and hyphens
+        # Allow dots and hyphens as they are common in filenames.
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_.-]', '', name_string)
         return sanitized_name[:100]
 
-    # Added prompt and extra_pnginfo as optional args to match format_filename signature better
-    # If you want to use wildcards like [prompt_text] or from extra_pnginfo, uncomment their INPUT_TYPES
-    def save_audio_as_mp3(self, audio_data, filename_prefix, bitrate, song_name=None, prompt=None, extra_pnginfo=None):
+    # Added prompt and extra_pnginfo as optional args to match how SaveImage passes them
+    # to folder_paths.get_save_image_path for pattern resolution.
+    def save_audio_as_mp3(self, audio_data, filename_prefix, bitrate, 
+                          song_name=None, prompt=None, extra_pnginfo=None): # Ensure these are passed
         if not isinstance(audio_data, dict):
             print(f"[SaveAudioMP3] Error: Expected a dictionary for audio_data. Got: {type(audio_data)}")
             return {"ui": {"text": ["Error: Invalid audio data format (expected dict)."]}}
@@ -59,7 +63,7 @@ class SaveAudioMP3:
         # print(f"[SaveAudioMP3] Received audio. Waveform data type: {type(source_waveform_data)}, Sample rate: {sample_rate}")
 
         audio_segment = None
-        # --- AudioSegment Creation Logic (condensed for brevity, use previous full logic) ---
+        # --- AudioSegment Creation Logic (condensed for brevity, use your previous full logic) ---
         if isinstance(source_waveform_data, torch.Tensor):
             waveform_tensor = source_waveform_data; waveform_single_item = None
             if waveform_tensor.ndim == 3 and waveform_tensor.shape[0]>0: waveform_single_item=waveform_tensor[0].cpu()
@@ -88,7 +92,8 @@ class SaveAudioMP3:
         # --- End AudioSegment Creation ---
 
         # --- Filename and Path Generation ---
-        current_prefix_template = filename_prefix
+        # 1. Combine filename_prefix and optional song_name
+        current_prefix_template = filename_prefix # This is the raw prefix from input
         if song_name and song_name.strip():
             sanitized_song_name = self._sanitize_filename_component(song_name.strip())
             if sanitized_song_name:
@@ -99,23 +104,21 @@ class SaveAudioMP3:
                     if base_part: current_prefix_template = os.path.join(dir_part, f"{base_part}_{sanitized_song_name}")
                     else: current_prefix_template = os.path.join(dir_part, sanitized_song_name)
         
-        # print(f"[SaveAudioMP3] Prefix template (with song_name, before ComfyUI pattern resolution): '{current_prefix_template}'")
+        print(f"[SaveAudioMP3] Filename prefix template passed to get_save_image_path: '{current_prefix_template}'")
 
-        # Use comfy.utils.format_filename to resolve ComfyUI-specific patterns
-        # format_filename(filename_prefix, prompt, extra_pnginfo, node_id=None)
-        # We don't pass node_id here. If you need node_id wildcards, it would need to be passed in.
-        # If you don't have prompt/extra_pnginfo inputs wired, they will be None, which is fine for date/time patterns.
-        resolved_prefix_for_path_util = comfy.utils.format_filename(current_prefix_template, prompt, extra_pnginfo)
-                                                                  
-        print(f"[SaveAudioMP3] Prefix after ComfyUI pattern resolution (input to get_save_image_path): '{resolved_prefix_for_path_util}'")
-
+        # 2. Use folder_paths.get_save_image_path. It is responsible for all pattern resolution.
+        # Pass prompt and extra_pnginfo to it, as SaveImage does, in case they are needed for patterns.
         num_samples_for_path = int(audio_segment.duration_seconds * audio_segment.frame_rate)
         num_channels_for_path = audio_segment.channels
 
-        actual_disk_output_folder, actual_disk_base_filename, counter, actual_ui_subfolder, _ = folder_paths.get_save_image_path(
-            resolved_prefix_for_path_util, self.output_dir, num_samples_for_path, num_channels_for_path
+        # This call should resolve ALL patterns in current_prefix_template and create directories.
+        # The returned components (folder, base_filename, subfolder) should be fully resolved.
+        actual_disk_output_folder, actual_disk_base_filename, counter, actual_ui_subfolder, filename_prefix_resolved_by_util = folder_paths.get_save_image_path(
+            current_prefix_template, self.output_dir, num_samples_for_path, num_channels_for_path, # Main args
+            prompt, extra_pnginfo # Args for pattern resolution, like in SaveImage
         )
         
+        # 3. Construct final filename and path for saving
         mp3_final_filename_on_disk = f"{actual_disk_base_filename}_{counter:05}.mp3"
         full_mp3_path_to_save_on_disk = os.path.join(actual_disk_output_folder, mp3_final_filename_on_disk)
         # --- End Filename and Path Generation ---
@@ -125,7 +128,12 @@ class SaveAudioMP3:
         else: export_parameters['bitrate'] = bitrate
         
         try:
+            # Log the path we are actually trying to save to
             print(f"[SaveAudioMP3] Attempting to save to actual disk path: '{full_mp3_path_to_save_on_disk}' with parameters: {export_parameters}")
+            
+            # Ensure the directory exists (get_save_image_path should handle this)
+            # os.makedirs(actual_disk_output_folder, exist_ok=True) # Defensive, but get_save_image_path should do it.
+            
             audio_segment.export(full_mp3_path_to_save_on_disk, format="mp3", **export_parameters)
         except Exception as e:
             msg = f"Error exporting MP3 to '{full_mp3_path_to_save_on_disk}': {e}."
@@ -133,9 +141,9 @@ class SaveAudioMP3:
             print(f"[SaveAudioMP3] Details for debugging path issue:")
             print(f"    - Original filename_prefix input: '{filename_prefix}'")
             print(f"    - Optional song_name input: '{song_name}'")
-            print(f"    - Template passed to comfy.utils.format_filename: '{current_prefix_template}'")
-            print(f"    - Prefix after comfy.utils.format_filename (passed to get_save_image_path): '{resolved_prefix_for_path_util}'")
+            print(f"    - Template passed to get_save_image_path: '{current_prefix_template}'")
             print(f"    - Outputs from get_save_image_path: folder='{actual_disk_output_folder}', base_filename='{actual_disk_base_filename}', subfolder='{actual_ui_subfolder}'")
+            print(f"    - Resolved prefix from get_save_image_path: '{filename_prefix_resolved_by_util}'") # See what it thought it resolved
             return {"ui": {"text": [msg]}}
         
         print(f"[SaveAudioMP3] Successfully saved MP3 to: '{full_mp3_path_to_save_on_disk}'")
