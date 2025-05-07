@@ -17,24 +17,25 @@ class SaveAudioMP3:
             "required": {
                 "audio_data": ("AUDIO",), # Expects AUDIO type
                 "filename_prefix": ("STRING", {"default": "audio/comfy_audio"}),
-                "bitrate": (["128k", "192k", "256k", "320k", "VBR (q4 default)"], {"default": "192k"}),
+                # Changed default bitrate to "320k"
+                "bitrate": (["128k", "192k", "256k", "320k", "VBR (q4 default)"], {"default": "320k"}), 
             },
         }
 
     RETURN_TYPES = ()
     FUNCTION = "save_audio_as_mp3"
     OUTPUT_NODE = True
-    CATEGORY = "audio/save"
+    CATEGORY = "audio/save" # Or your preferred category
 
     def save_audio_as_mp3(self, audio_data, filename_prefix, bitrate):
-        # Based on the new error, audio_data is directly the dictionary:
+        # audio_data is expected to be a dictionary:
         # e.g., {"waveform": tensor, "sample_rate": int}
         
         if not isinstance(audio_data, dict):
             print(f"[SaveAudioMP3] Error: Expected a dictionary for audio_data. Got: {type(audio_data)}")
             return {"ui": {"text": ["Error: Invalid audio data format (expected dict)."]}}
 
-        audio_dict = audio_data # audio_data is already the dictionary
+        audio_dict = audio_data 
 
         if "waveform" not in audio_dict or "sample_rate" not in audio_dict:
             print(f"[SaveAudioMP3] Error: Audio dictionary missing 'waveform' or 'sample_rate' key. Keys: {audio_dict.keys()}")
@@ -142,13 +143,17 @@ class SaveAudioMP3:
         
         print(f"[SaveAudioMP3] Successfully saved MP3: {full_mp3_path}")
         
-        return {
-            "ui": {
-                "audio": [{
-                    "filename": mp3_filename,
-                    "subfolder": subfolder,
-                    "type": self.type,
-                    "format": "audio/mpeg" 
-                }]
-            }
-        }
+        # --- Player UI Update ---
+        # Construct the UI payload for the audio player.
+        # Omit the 'format' key to match the built-in SaveAudio node's structure.
+        results_list = [{
+            "filename": mp3_filename,
+            "subfolder": subfolder,
+            "type": self.type 
+        }]
+        
+        ui_payload = {"audio": results_list}
+        
+        print(f"[SaveAudioMP3] Returning UI data for player: { {'ui': ui_payload} }") # Debug print
+        
+        return {"ui": ui_payload}
