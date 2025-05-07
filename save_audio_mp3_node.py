@@ -2,153 +2,188 @@
 
 import os
 import torch
-import torchaudio # For saving WAV
 import numpy as np
 from pydub import AudioSegment
 import folder_paths
-import re
+import re # For sanitizing song_name
 
 class SaveAudioMP3:
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
-        self.temp_dir = folder_paths.get_temp_directory() # For temporary WAV
-        # self.type for the main output (MP3) is "output"
-        # self.type for the UI preview (WAV) will be "temp"
+        self.type = "output" 
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "audio_data": ("AUDIO",),
-                "filename_prefix": ("STRING", {"default": "audio/comfy_audio"}), # For MP3
+                "filename_prefix": ("STRING", {"default": "audio/comfy_audio"}),
                 "bitrate": (["128k", "192k", "256k", "320k", "VBR (q4 default)"], {"default": "320k"}),
             },
-            "optional": { 
-                "song_name": ("STRING", {"default": ""}), # For MP3 filename
+            "optional": { # New optional input for song name
+                "song_name": ("STRING", {"default": ""}),
             }
         }
 
     RETURN_TYPES = ()
-    FUNCTION = "save_audio_and_preview" # Renamed for clarity
+    FUNCTION = "save_audio_as_mp3"
     OUTPUT_NODE = True
     CATEGORY = "audio/save"
 
     def _sanitize_filename_component(self, name_string):
-        if not name_string: return ""
+        if not name_string:
+            return ""
+        # Replace spaces and common problematic characters with underscores
         name_string = re.sub(r'[\s/:*?"<>|]+', '_', name_string)
-        sanitized_name = re.sub(r'[^a-zA-Z0-9_.-]', '', name_string)
+        # Remove any characters not in a safe list (alphanumeric, underscore, hyphen)
+        # This is a more restrictive approach for maximum safety.
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '', name_string)
+        # Limit length to prevent overly long filenames
         return sanitized_name[:100]
 
-    def save_audio_and_preview(self, audio_data, filename_prefix, bitrate, song_name=None):
-        # --- Basic Input Validation (as before) ---
+
+    def save_audio_as_mp3(self, audio_data, filename_prefix, bitrate, song_name=None):
         if not isinstance(audio_data, dict):
             print(f"[SaveAudioMP3] Error: Expected a dictionary for audio_data. Got: {type(audio_data)}")
             return {"ui": {"text": ["Error: Invalid audio data format (expected dict)."]}}
+
         audio_dict = audio_data 
         if "waveform" not in audio_dict or "sample_rate" not in audio_dict:
             print(f"[SaveAudioMP3] Error: Audio dictionary missing 'waveform' or 'sample_rate' key. Keys: {audio_dict.keys()}")
             return {"ui": {"text": ["Error: Audio dictionary incomplete."]}}
 
-        source_waveform_data = audio_dict["waveform"] # This is a torch.Tensor
+        source_waveform_data = audio_dict["waveform"]
         sample_rate = audio_dict["sample_rate"]
         
-        # print(f"[SaveAudioMP3] Received audio. Waveform data type: {type(source_waveform_data)}, Sample rate: {sample_rate}")
+        print(f"[SaveAudioMP3] Received audio. Waveform data type: {type(source_waveform_data)}, Sample rate: {sample_rate}")
 
-        # --- 1. Save the primary MP3 to output directory ---
-        mp3_saved_successfully = False
-        try:
-            # --- MP3 Filename and Path Generation (using self.output_dir) ---
-            mp3_filename_prefix = filename_prefix
-            if song_name and song_name.strip():
-                sanitized_song_name = self._sanitize_filename_component(song_name.strip())
-                if sanitized_song_name:
-                    if mp3_filename_prefix.endswith(('/', '\\')): mp3_filename_prefix = f"{mp3_filename_prefix}{sanitized_song_name}"
-                    else:
-                        dir_part, base_part = os.path.split(mp3_filename_prefix)
-                        if base_part: mp3_filename_prefix = os.path.join(dir_part, f"{base_part}_{sanitized_song_name}")
-                        else: mp3_filename_prefix = os.path.join(dir_part, sanitized_song_name)
-            
-            # For MP3, use folder_paths.get_save_image_path with self.output_dir
-            # We assume no ComfyUI wildcards for now, focusing on player
-            mp3_output_folder, mp3_base_filename, mp3_counter, _, _ = folder_paths.get_save_image_path(
-                mp3_filename_prefix, self.output_dir, 
-                int(source_waveform_data.shape[-1]), # num_samples as width proxy
-                int(source_waveform_data.shape[-2])  # num_channels as height proxy
-            )
-            actual_mp3_filename = f"{mp3_base_filename}_{mp3_counter:05}.mp3"
-            full_mp3_path_to_save = os.path.join(mp3_output_folder, actual_mp3_filename)
-
-            # --- AudioSegment Creation for MP3 (from Tensor) ---
-            audio_segment_for_mp3 = None
-            if isinstance(source_waveform_data, torch.Tensor):
-                waveform_tensor = source_waveform_data
-                waveform_single_item = waveform_tensor[0].cpu() if waveform_tensor.ndim == 3 and waveform_tensor.shape[0] > 0 else waveform_tensor.cpu()
-                waveform_np = waveform_single_item.numpy().T 
-                audio_data_int16 = (waveform_np * 32767).astype(np.int16)
-                num_channels = audio_data_int16.shape[1] if audio_data_int16.ndim > 1 else 1
-                audio_segment_for_mp3 = AudioSegment(data=audio_data_int16.tobytes(), sample_width=2, frame_rate=sample_rate, channels=num_channels)
-            
-            if audio_segment_for_mp3:
-                export_parameters = {}
-                if bitrate == "VBR (q4 default)": export_parameters['parameters'] = ["-q:a", "4"] 
-                else: export_parameters['bitrate'] = bitrate
-                
-                print(f"[SaveAudioMP3] Saving MP3 to: '{full_mp3_path_to_save}'")
-                audio_segment_for_mp3.export(full_mp3_path_to_save, format="mp3", **export_parameters)
-                print(f"[SaveAudioMP3] Successfully saved MP3: '{full_mp3_path_to_save}'")
-                mp3_saved_successfully = True
+        # --- AudioSegment Creation (remains the same) ---
+        audio_segment = None
+        if isinstance(source_waveform_data, torch.Tensor):
+            waveform_tensor = source_waveform_data
+            print(f"[SaveAudioMP3] Source data is a Tensor. Shape: {waveform_tensor.shape}, Dtype: {waveform_tensor.dtype}")
+            waveform_single_item = None
+            if waveform_tensor.ndim == 3 and waveform_tensor.shape[0] > 0: 
+                waveform_single_item = waveform_tensor[0].cpu() 
+            elif waveform_tensor.ndim == 2: 
+                waveform_single_item = waveform_tensor.cpu()
             else:
-                print(f"[SaveAudioMP3] Error: Could not create AudioSegment for MP3 conversion.")
+                msg = f"Error: Tensor has unexpected dimensions: {waveform_tensor.shape}."
+                print(f"[SaveAudioMP3] {msg}")
+                return {"ui": {"text": [msg]}}
+            waveform_np = waveform_single_item.numpy().T 
+            audio_data_int16 = (waveform_np * 32767).astype(np.int16)
+            num_channels = audio_data_int16.shape[1] if audio_data_int16.ndim > 1 else 1
+            try:
+                audio_segment = AudioSegment(data=audio_data_int16.tobytes(), sample_width=2, frame_rate=sample_rate, channels=num_channels)
+            except Exception as e:
+                msg = f"Error creating AudioSegment from Tensor: {e}."
+                print(f"[SaveAudioMP3] {msg}")
+                return {"ui": {"text": [msg]}}
+        elif isinstance(source_waveform_data, str): 
+            # ... (loading from path logic - remains the same) ...
+            audio_file_path = source_waveform_data
+            # (Path resolution and loading logic as before)
+            if not os.path.isabs(audio_file_path): # Simplified for brevity, use previous full logic
+                resolved_path = folder_paths.get_full_path("input", audio_file_path) # Check input first
+                if not resolved_path or not os.path.exists(resolved_path) :
+                     resolved_path = folder_paths.get_full_path("output", audio_file_path) # Then output
+                     if not resolved_path or not os.path.exists(resolved_path):
+                          resolved_path = folder_paths.get_full_path("temp", audio_file_path) # Then temp
+                if resolved_path and os.path.exists(resolved_path): audio_file_path = resolved_path
+                elif not os.path.exists(audio_file_path): # Fallback to check as is
+                    msg = f"Error: Audio file path not found: {source_waveform_data}"
+                    print(f"[SaveAudioMP3] {msg}"); return {"ui": {"text": [msg]}}
+            try:
+                audio_segment = AudioSegment.from_file(audio_file_path)
+                if audio_segment.frame_rate != sample_rate:
+                    audio_segment = audio_segment.set_frame_rate(sample_rate)
+            except Exception as e:
+                msg = f"Error loading audio file '{audio_file_path}': {e}."
+                print(f"[SaveAudioMP3] {msg}"); return {"ui": {"text": [msg]}}
+        else:
+            msg = f"Error: Waveform data type unsupported: {type(source_waveform_data)}."
+            print(f"[SaveAudioMP3] {msg}"); return {"ui": {"text": [msg]}}
+        if audio_segment is None:
+            msg = "Error: AudioSegment could not be prepared."
+            print(f"[SaveAudioMP3] {msg}"); return {"ui": {"text": [msg]}}
+        # --- End AudioSegment Creation ---
+
+        # --- Filename and Path Generation ---
+        # Sanitize song_name if provided and append to filename_prefix
+        current_filename_prefix = filename_prefix
+        if song_name and song_name.strip():
+            sanitized_song_name = self._sanitize_filename_component(song_name.strip())
+            if sanitized_song_name:
+                # Append to the filename part of the prefix
+                if current_filename_prefix.endswith(('/', '\\')):
+                    current_filename_prefix = f"{current_filename_prefix}{sanitized_song_name}"
+                else:
+                    # If no trailing slash, append with an underscore
+                    # To avoid merging with last part of prefix if it's not a directory
+                    # e.g. "myprefix" + "song" -> "myprefix_song"
+                    # e.g. "mydir/myprefix" + "song" -> "mydir/myprefix_song"
+                    parts = os.path.split(current_filename_prefix)
+                    if parts[1]: # if there is a filename component
+                        current_filename_prefix = os.path.join(parts[0], f"{parts[1]}_{sanitized_song_name}")
+                    else: # only a directory component
+                        current_filename_prefix = os.path.join(parts[0], sanitized_song_name)
+
+
+        print(f"[SaveAudioMP3] Effective filename_prefix for path generation: {current_filename_prefix}")
+
+        num_samples_for_path = int(audio_segment.duration_seconds * audio_segment.frame_rate)
+        num_channels_for_path = audio_segment.channels
+
+        # get_save_image_path is expected to resolve patterns in current_filename_prefix
+        # and create the necessary directories.
+        # It should return:
+        # - resolved_full_output_folder: Absolute path to the (resolved) directory for the file
+        # - resolved_base_filename: Base filename (resolved prefix part, without counter/extension)
+        # - counter: Counter for uniqueness
+        # - resolved_subfolder: Subfolder part (resolved), relative to self.output_dir
+        resolved_full_output_folder, resolved_base_filename, counter, resolved_subfolder, _ = folder_paths.get_save_image_path(
+            current_filename_prefix, self.output_dir, num_samples_for_path, num_channels_for_path
+        )
         
-        except Exception as e:
-            print(f"[SaveAudioMP3] Error during MP3 saving: {e}")
-            # Continue to try and save WAV for preview if possible, but report MP3 error.
-            # For now, let's return an error if MP3 saving fails, as it's the primary goal.
-            return {"ui": {"text": [f"Error saving MP3: {e}"]}}
+        # This filename should be based on the *resolved* base filename
+        mp3_final_filename = f"{resolved_base_filename}_{counter:05}.mp3"
+        # This path should be fully resolved and where the file is actually saved
+        full_mp3_path_to_save = os.path.join(resolved_full_output_folder, mp3_final_filename)
+        # --- End Filename and Path Generation ---
 
-
-        # --- 2. Save a temporary WAV for UI preview ---
-        # The input `source_waveform_data` is the raw waveform tensor.
-        # The input `sample_rate` is its sample rate.
-        ui_results = []
+        export_parameters = {}
+        if bitrate == "VBR (q4 default)":
+            export_parameters['parameters'] = ["-q:a", "4"] 
+        else:
+            export_parameters['bitrate'] = bitrate
+        
         try:
-            # Use a generic prefix for the temp WAV file
-            temp_wav_prefix = "preview_audio_mp3node" 
-            
-            # Use folder_paths.get_save_image_path with self.temp_dir
-            wav_temp_folder, wav_temp_base_filename, wav_temp_counter, wav_temp_subfolder, _ = folder_paths.get_save_image_path(
-                temp_wav_prefix, self.temp_dir,
-                int(source_waveform_data.shape[-1]), 
-                int(source_waveform_data.shape[-2]) 
-            )
-            actual_wav_filename = f"{wav_temp_base_filename}_{wav_temp_counter:05}.wav" # Save as WAV
-            full_wav_path_for_preview = os.path.join(wav_temp_folder, actual_wav_filename)
-
-            # The waveform in audio_dict["waveform"] is often (1, channels, samples)
-            # torchaudio.save expects (channels, samples) or (samples) for mono
-            waveform_to_save_wav = source_waveform_data.squeeze(0) # Remove batch dim if present
-
-            print(f"[SaveAudioMP3] Saving temporary WAV for preview to: '{full_wav_path_for_preview}'")
-            torchaudio.save(full_wav_path_for_preview, waveform_to_save_wav, sample_rate, format="wav")
-            
-            ui_results.append({
-                "filename": actual_wav_filename,
-                "subfolder": wav_temp_subfolder, # Subfolder relative to temp_dir
-                "type": "temp"                   # Crucial: type is "temp"
-            })
-            print(f"[SaveAudioMP3] Temporary WAV for preview saved.")
-
+            print(f"[SaveAudioMP3] Attempting to save to (resolved path): {full_mp3_path_to_save} with parameters: {export_parameters}")
+            audio_segment.export(full_mp3_path_to_save, format="mp3", **export_parameters)
         except Exception as e:
-            print(f"[SaveAudioMP3] Error saving temporary WAV for preview: {e}")
-            # If WAV preview fails, we can still return an empty UI or a text message
-            # but the primary MP3 might have saved. For now, we'll just not have a preview.
-            pass # Continue, as MP3 might be saved.
-
-        # Return UI data pointing to the temporary WAV if created,
-        # otherwise, just indicate MP3 was saved if that succeeded.
-        if ui_results:
-            return {"ui": {"audio": ui_results}}
-        elif mp3_saved_successfully: # MP3 saved but no WAV preview
-             return {"ui": {"text": [f"MP3 saved. Preview not generated: {actual_mp3_filename}"]}}
-        else: # Should have been caught by MP3 error return earlier
-            return {"ui": {"text": ["Audio saving failed."] }}
+            # If export fails, it might be due to the path still containing unresolved patterns
+            # or other filesystem issues.
+            msg = f"Error exporting MP3 to '{full_mp3_path_to_save}': {e}. Check path and ffmpeg."
+            print(f"[SaveAudioMP3] {msg}")
+            # Also print the inputs to get_save_image_path for debugging the pattern issue
+            print(f"[SaveAudioMP3] Inputs to get_save_image_path were: prefix='{current_filename_prefix}', output_dir='{self.output_dir}'")
+            print(f"[SaveAudioMP3] Outputs from get_save_image_path were: folder='{resolved_full_output_folder}', base_filename='{resolved_base_filename}', subfolder='{resolved_subfolder}'")
+            return {"ui": {"text": [msg]}}
+        
+        print(f"[SaveAudioMP3] Successfully saved MP3 to: {full_mp3_path_to_save}")
+        
+        # --- Player UI Payload ---
+        # The filename and subfolder for the UI MUST match how ComfyUI's /view endpoint will find them.
+        # These should be based on the *resolved* components.
+        results_list = [{
+            "filename": mp3_final_filename,       # e.g., "ComfyUI_20230101-Ace-Audio_MySong_00001.mp3"
+            "subfolder": resolved_subfolder,     # e.g., "2023-01-01" (relative to output_dir)
+            "type": self.type                    # "output"
+        }]
+        
+        ui_payload = {"audio": results_list}
+        
+        print(f"[SaveAudioMP3] Returning UI data for player: { {'ui': ui_payload} }")
+        
+        return {"ui": ui_payload}
